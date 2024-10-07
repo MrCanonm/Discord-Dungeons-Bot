@@ -551,3 +551,15 @@ function createRoleMentionsMessage(roles: {
   };
 }
 client.login(process.env.TOKEN);
+
+const express = require("express");
+const app = express();
+const port = process.env.PORT || 4000;
+
+app.get("/", (req: any, res: any) => {
+  res.send("Bot Online in port " + port);
+});
+
+app.listen(port, () => {
+  console.log(`Example app listening on port ${port}`);
+});
