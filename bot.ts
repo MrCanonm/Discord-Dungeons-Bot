@@ -11,8 +11,8 @@ import {
   GuildMember,
   VoiceChannel,
   ChannelType,
+  VoiceState,
 } from "discord.js";
-import { roles } from "./resource/roles";
 import { dungeons } from "./resource/mazmorras";
 import dotenv from "dotenv";
 dotenv.config();
@@ -56,7 +56,7 @@ const rest = new REST({ version: "9" }).setToken(process.env.TOKEN);
     await rest.put(
       Routes.applicationGuildCommands(
         "1291449338341490748",
-        "737036454869467136"
+        process.env.SERVER_ID
       ),
       {
         body: commands,
@@ -122,37 +122,6 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
-client.on("voiceStateUpdate", async (oldState, newState) => {
-  // Verificar si el miembro salió del canal
-  if (oldState.channelId && !newState.channelId) {
-    const channel = oldState.channel;
-
-    // Verificar si el canal es de voz
-    if (channel && channel.type === ChannelType.GuildVoice) {
-      // Asegurarte de que el canal es un VoiceChannel
-      const voiceChannel = channel as VoiceChannel;
-
-      // Verificar si el canal está vacío
-      if (voiceChannel.members.size === 0) {
-        // Esperar 5 segundos antes de verificar nuevamente
-        setTimeout(async () => {
-          // Volver a verificar si sigue vacío
-          if (voiceChannel.members.size === 0) {
-            try {
-              await voiceChannel.delete(); // Eliminar el canal vacío
-              console.log(
-                `Canal ${voiceChannel.name} eliminado porque está vacío.`
-              );
-            } catch (error) {
-              console.error(`Error al eliminar el canal: ${error}`);
-            }
-          }
-        }, 5000); // 5000 ms = 5 segundos
-      }
-    }
-  }
-});
-
 // Cambia la firma de la función para aceptar el sessionId
 async function handleDungeonSelection(
   interaction: BaseInteraction,
@@ -162,6 +131,9 @@ async function handleDungeonSelection(
   if (!session) return;
 
   const creatorId = interaction.user.id;
+
+  const guild = interaction.guild; // Obtener la guild desde la interacción
+  const rolesData = await getRoleData(guild);
 
   if (interaction.channel instanceof TextChannel) {
     const collector = interaction.channel.createMessageComponentCollector({
@@ -173,17 +145,23 @@ async function handleDungeonSelection(
         session.selectedDungeon =
           dungeons.find((d) => d.name === interaction.values[0]) || null;
 
-        if (session.selectedDungeon) {
-          await interaction.update(
-            createDungeonEmbed(session, sessionId, creatorId)
-          );
-        }
+        const dungeonEmbed = await createDungeonEmbed(
+          session,
+          sessionId,
+          creatorId,
+          rolesData
+        );
+        await interaction.update(dungeonEmbed);
+
+        // Enviar mensaje separado con menciones de roles
+        const roleMentionsMessage = createRoleMentionsMessage(rolesData);
+        await interaction.channel.send(roleMentionsMessage);
       } else if (interaction.customId.startsWith(`join_${sessionId}`)) {
         const [action, role] = interaction.customId.split("_").slice(1);
         handleRoleSelection(interaction, session, role);
         await interaction.update(
-          createDungeonEmbed(session, sessionId, creatorId),
-          createDungeonEmbed(session, sessionId, creatorId)
+          await createDungeonEmbed(session, sessionId, creatorId, rolesData),
+          await createDungeonEmbed(session, sessionId, creatorId, rolesData)
         );
       } else if (interaction.customId === `close_dungeon_${sessionId}`) {
         // Verificar si el usuario que intenta cerrar es el creador
@@ -282,93 +260,75 @@ async function handleRoleSelection(
   }
 }
 
-async function moveToPartyVoiceChannel(member: GuildMember, session: Session) {
-  if (!session.voiceChannelId) {
-    // Si no hay un canal de voz asignado, crear uno nuevo
-    try {
-      const dungeonName = session.selectedDungeon
-        ? session.selectedDungeon.name
-        : "Grupo de Mazmorras"; // Nombre por defecto si no hay mazmorras seleccionadas
-
-      // Contar cuántos canales existen con el mismo nombre
-      const existingChannels = member.guild.channels.cache.filter(
-        (channel) =>
-          channel.name.startsWith(`${dungeonName} Party`) && channel.type === 2
-      );
-
-      // Determinar el número a añadir al nombre
-      const channelNumber =
-        existingChannels.size > 0
-          ? existingChannels.size + 1 // Si hay canales existentes, usar el número siguiente
-          : 1; // Si no, usar 1
-
-      const category = member.guild.channels.cache.find(
-        (c) =>
-          c.id === "737036455360069745" && c.type === ChannelType.GuildCategory
-      );
-
-      const newChannel = await member.guild.channels.create({
-        name: `${dungeonName} Party ${channelNumber}`, // Añadir el número al nombre
-        type: 2, // 2 es el tipo para canales de voz
-        parent: category?.id,
-      });
-      session.voiceChannelId = newChannel.id;
-    } catch (error) {
-      console.error(`Error al crear el canal de voz: ${error}`);
-      return;
-    }
-  }
-
-  const channel = member.guild.channels.cache.get(
-    session.voiceChannelId
-  ) as VoiceChannel;
-  if (!channel || channel.type !== 2) return;
-
-  try {
-    await member.voice.setChannel(channel);
-  } catch (error) {
-    console.error(`Error al mover al usuario al canal de voz: ${error}`);
-  }
-}
-
-function createDungeonEmbed(
+async function createDungeonEmbed(
   session: any,
   sessionId: string,
-  creatorId: string
+  creatorId: string,
+  roles: {
+    tank: { id: string; name: string };
+    healer: { id: string; name: string };
+    dps: { id: string; name: string };
+  }
 ) {
-  const { party, selectedDungeon } = session;
+  const { selectedDungeon } = session;
+
   const embed = new EmbedBuilder()
-    .setTitle(
-      `Grupo para ${selectedDungeon ? selectedDungeon.name : "Desconocida"}`
-    )
+    .setTitle("Mazmorras en progreso")
     .setDescription(
-      `**🛡️ Tanque:** ${party.tank ? `<@${party.tank}> (1/1)` : "0/1"}\n` +
-        `**💉 Healer:** ${
-          party.healer ? `<@${party.healer}> (1/1)` : "0/1"
-        }\n` +
-        `**⚔️ DPS:** ${party.dps.length}/4 ` +
-        (party.dps.length > 0
-          ? `(${party.dps.map((id: string) => `<@${id}>`).join(", ")})`
-          : "") +
-        `\n\nReacciona para unirte al rol correspondiente.`
+      `** Grupo Para: ** ${session.selectedDungeon?.name || "Ninguna"}`
     )
+    .setColor(0x00ff00)
     .setImage(selectedDungeon.imageUrl)
     .setColor(0x00ff00);
+
+  const tankDisplay = session.party.tank
+    ? `<@${session.party.tank}> (1/1)`
+    : "Ninguno (0/1)";
+
+  const healerDisplay = session.party.healer
+    ? `<@${session.party.healer}> (1/1)`
+    : "Ninguno (0/1)";
+
+  const dpsCount = session.party.dps.length;
+  const dpsDisplay =
+    dpsCount > 0
+      ? `(${dpsCount}/4)\n${session.party.dps
+          .map((id: string) => `<@${id}>`)
+          .join(", ")}`
+      : `(0/4)\nNinguno`;
+
+  embed.addFields(
+    {
+      name: "🛡️ Tanque",
+      value: tankDisplay,
+      inline: true,
+    },
+    {
+      name: "💉 Healer",
+      value: healerDisplay,
+      inline: true,
+    },
+    {
+      name: "⚔️ DPS",
+      value: dpsDisplay,
+      inline: true,
+    }
+  );
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`join_${sessionId}_tank`)
-      .setLabel(roles.tank)
+      .setLabel(roles.tank.name) // Nombre del rol
       .setEmoji("🛡️")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId(`join_${sessionId}_healer`)
-      .setLabel(roles.healer)
+      .setLabel(roles.healer.name) // Nombre del rol
       .setEmoji("💉")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId(`join_${sessionId}_dps`)
-      .setLabel(roles.dps)
+      .setLabel(roles.dps.name) // Nombre del rol
       .setEmoji("⚔️")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
@@ -377,7 +337,136 @@ function createDungeonEmbed(
       .setStyle(ButtonStyle.Danger)
   );
 
-  return { embeds: [embed], components: [row] };
+  const creator = await client.users.fetch(creatorId);
+  embed.setFooter({ text: `Creador: ${creator.username}` });
+
+  return {
+    embeds: [embed],
+    components: [row],
+  };
 }
 
+async function moveToPartyVoiceChannel(member: GuildMember, session: Session) {
+  // Verifica si ya existe un canal de voz
+  if (!session.voiceChannelId) {
+    try {
+      const dungeonName = session.selectedDungeon
+        ? session.selectedDungeon.name
+        : "Grupo de Mazmorras"; // Nombre por defecto
+
+      // Filtrar canales existentes
+      const existingChannels = member.guild.channels.cache.filter(
+        (channel) =>
+          channel.name.startsWith(`${dungeonName} Party`) &&
+          channel.type === ChannelType.GuildVoice
+      );
+
+      const channelNumber =
+        existingChannels.size > 0 ? existingChannels.size + 1 : 1; // Determinar el número del canal
+
+      const category = member.guild.channels.cache.find(
+        (c) =>
+          c.id === process.env.CATEGORY_ID &&
+          c.type === ChannelType.GuildCategory
+      );
+
+      // Crear el nuevo canal de voz
+      const newChannel = await member.guild.channels.create({
+        name: `${dungeonName} Party ${channelNumber}`, // Nombre del canal
+        type: ChannelType.GuildVoice,
+        parent: category?.id,
+      });
+      session.voiceChannelId = newChannel.id; // Almacenar ID del nuevo canal
+      console.log(`Canal creado: ${newChannel.name}, ID: ${newChannel.id}`);
+
+      // Listener para eliminar el canal si está vacío
+      const listener = (oldState: VoiceState, newState: VoiceState) => {
+        // Comprobar si el nuevo estado está asociado al canal creado
+        if (
+          newState.channelId === newChannel.id ||
+          oldState.channelId === newChannel.id
+        ) {
+          // Si ya no hay miembros en el canal
+          if (newChannel.members.size === 0) {
+            // Esperar 5 segundos antes de intentar eliminar el canal
+            setTimeout(() => {
+              if (newChannel.members.size === 0) {
+                // Verificar nuevamente si sigue vacío
+                newChannel
+                  .delete()
+                  .then(() => {
+                    console.log(
+                      `Canal eliminado: ${newChannel.name}, ID: ${newChannel.id}`
+                    );
+                    // Aquí se puede quitar el listener si es necesario
+                    client.off("voiceStateUpdate", listener); // Asegúrate de usar la instancia correcta
+                  })
+                  .catch((error) => {
+                    console.error(
+                      `Error al eliminar el canal de voz: ${error}`
+                    );
+                  });
+              }
+            }, 5000); // 5 segundos
+          }
+        }
+      };
+
+      // Escuchar cambios en el estado de voz
+      client.on("voiceStateUpdate", listener); // Reemplaza `client` con tu instancia de cliente de Discord
+    } catch (error) {
+      console.error(`Error al crear el canal de voz: ${error}`);
+      return; // Terminar la función si hay un error
+    }
+  }
+
+  // Mover al usuario al canal de voz creado
+  const channel = member.guild.channels.cache.get(
+    session.voiceChannelId
+  ) as VoiceChannel;
+  if (!channel || channel.type !== ChannelType.GuildVoice) return;
+
+  try {
+    await member.voice.setChannel(channel); // Mover al usuario
+  } catch (error) {
+    console.error(`Error al mover al usuario al canal de voz: ${error}`);
+  }
+}
+
+async function getRoleData(guild: any) {
+  const rolesId = {
+    tank: "737050898513133589",
+    healer: "1173103511077138473",
+    dps: "1173103557336113152",
+  };
+  const guildRoles = await guild.roles.fetch(); // Asegúrate de que esto es correcto
+
+  // Mapear los roles a sus IDs y nombres
+  return {
+    tank: {
+      id: rolesId.tank,
+      name: guildRoles.get(rolesId.tank)?.name || "Tanque",
+    },
+    healer: {
+      id: rolesId.healer,
+      name: guildRoles.get(rolesId.healer)?.name || "Healer",
+    },
+    dps: {
+      id: rolesId.dps,
+      name: guildRoles.get(rolesId.dps)?.name || "DPS",
+    },
+  };
+}
+
+function createRoleMentionsMessage(roles: {
+  tank: { id: string; name: string };
+  healer: { id: string; name: string };
+  dps: { id: string; name: string };
+}) {
+  const roleMentions = `<@&${roles.tank.id}> <@&${roles.healer.id}> <@&${roles.dps.id}>`;
+  return {
+    content: `¡Nueva mazmorra disponible!: ${roleMentions}`,
+    allowedMentions: { roles: [roles.tank.id, roles.healer.id, roles.dps.id] },
+  };
+}
 client.login(process.env.TOKEN);
