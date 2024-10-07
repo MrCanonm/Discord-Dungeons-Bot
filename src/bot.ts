@@ -81,6 +81,17 @@ client.on("interactionCreate", async (interaction) => {
 
   const { commandName } = interaction;
 
+  // Verifica si el comando se ejecuta en el canal permitido
+  if (
+    interaction.channel &&
+    interaction.channel.id !== process.env.CHANNEL_ID
+  ) {
+    return interaction.reply({
+      content: "Este comando solo se puede usar en el canal específico.",
+      ephemeral: true, // Solo visible para el usuario que ejecutó el comando
+    });
+  }
+
   if (commandName === "findparty") {
     const sessionId = Date.now().toString();
     dungeonSessions.set(sessionId, {
