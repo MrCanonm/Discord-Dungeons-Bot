@@ -15,6 +15,7 @@ import {
 } from "discord.js";
 import { dungeons } from "./resource/mazmorras";
 import dotenv from "dotenv";
+import { eventTypes } from "./resource/eventsTypes";
 dotenv.config();
 
 const client = new Client({
@@ -42,8 +43,8 @@ interface Session {
 // Define tus comandos
 const commands = [
   {
-    name: "iniciarboss",
-    description: "Inicia un boss en la mazmorras y selecciona una mazmorras.",
+    name: "findparty",
+    description: "Crear grupos tanto para mazmorras como para otros.",
   },
 ];
 
@@ -80,7 +81,7 @@ client.on("interactionCreate", async (interaction) => {
 
   const { commandName } = interaction;
 
-  if (commandName === "iniciarboss") {
+  if (commandName === "findparty") {
     const sessionId = Date.now().toString();
     dungeonSessions.set(sessionId, {
       party: {
@@ -93,23 +94,19 @@ client.on("interactionCreate", async (interaction) => {
       creatorId: interaction.user.id,
     });
 
+    // Preguntar al usuario qué tipo de grupo quiere crear
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
       new StringSelectMenuBuilder()
-        .setCustomId(`select_dungeon_${sessionId}`)
-        .setPlaceholder("Selecciona una mazmorra")
-        .addOptions(
-          dungeons.map((dungeon) => ({
-            label: dungeon.name,
-            description: `Selecciona ${dungeon.name}`,
-            value: dungeon.name,
-            emoji: "🔴",
-          }))
-        )
+        .setCustomId(`select_content_type_${sessionId}`)
+        .setPlaceholder("Selecciona el tipo de grupo")
+        .addOptions(eventTypes)
     );
 
     const embed = new EmbedBuilder()
-      .setTitle("Selecciona una mazmorra")
-      .setDescription("Elige la mazmorra para iniciar la creación del grupo.")
+      .setTitle("Selecciona el tipo de contenido")
+      .setDescription(
+        "Elige el tipo de contenido para el que quieres crear el grupo."
+      )
       .setColor(0x00ff00);
 
     await interaction.reply({
@@ -117,8 +114,8 @@ client.on("interactionCreate", async (interaction) => {
       components: [row],
     });
 
-    // Maneja la selección de mazmorras
-    handleDungeonSelection(interaction, sessionId);
+    // Manejar la selección del tipo de contenido
+    handleContentTypeSelection(interaction, sessionId);
   }
 });
 
@@ -191,6 +188,90 @@ async function handleDungeonSelection(
     collector.on("end", () => {
       if (dungeonSessions.has(sessionId)) {
         dungeonSessions.delete(sessionId);
+      }
+    });
+  }
+}
+
+async function handleContentTypeSelection(
+  interaction: BaseInteraction,
+  sessionId: string
+) {
+  const session = dungeonSessions.get(sessionId);
+  if (!session) return;
+
+  if (interaction.channel instanceof TextChannel) {
+    const collector = interaction.channel.createMessageComponentCollector({
+      time: 3600000, // 1 hora de tiempo límite
+    });
+
+    collector.on("collect", async (interaction: any) => {
+      // Selección de tipo de contenido
+      if (interaction.customId.startsWith(`select_content_type_${sessionId}`)) {
+        const selectedType = interaction.values[0]; // "dungeon", "contract", "abyss", "other"
+
+        if (selectedType === "mazmorras") {
+          // Mostrar lista de mazmorras
+          const row =
+            new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+              new StringSelectMenuBuilder()
+                .setCustomId(`select_dungeon_${sessionId}`)
+                .setPlaceholder("Selecciona una mazmorra")
+                .addOptions(
+                  dungeons.map((dungeon) => ({
+                    label: dungeon.name,
+                    description: `Selecciona ${dungeon.name}`,
+                    value: dungeon.name,
+                    emoji: "🔴",
+                  }))
+                )
+            );
+
+          const embed = new EmbedBuilder()
+            .setTitle("Selecciona una mazmorra")
+            .setDescription(
+              "Elige la mazmorra para iniciar la creación del grupo."
+            )
+            .setColor(0x00ff00);
+
+          await interaction.update({
+            embeds: [embed],
+            components: [row],
+          });
+          await handleDungeonSelection(interaction, sessionId);
+        } else {
+          // Crea el grupo directamente para los otros tipos de contenido
+          const selectedEvent = eventTypes.find(
+            (event) => event.value === selectedType
+          );
+
+          // Asignar el label correspondiente al nombre del dungeon
+          if (selectedEvent) {
+            session.selectedDungeon = {
+              name: selectedEvent.label,
+              imageUrl: selectedEvent.imageUrl,
+            }; // Marcar tipo
+          }
+
+          const creatorId = interaction.user.id;
+
+          const guild = interaction.guild;
+          const rolesData = await getRoleData(guild);
+
+          const dungeonEmbed = await createDungeonEmbed(
+            session,
+            sessionId,
+            creatorId,
+            rolesData
+          );
+          await interaction.update(dungeonEmbed);
+          // Enviar menciones para reclutamiento
+          const roleMentionsMessage = createRoleMentionsMessage(
+            await getRoleData(interaction.guild)
+          );
+          await interaction.channel.send(roleMentionsMessage);
+          await handleDungeonSelection(interaction, sessionId);
+        }
       }
     });
   }
@@ -273,7 +354,7 @@ async function createDungeonEmbed(
   const { selectedDungeon } = session;
 
   const embed = new EmbedBuilder()
-    .setTitle("Mazmorras en progreso")
+    .setTitle("Creacion de Grupo en Progreso")
     .setDescription(
       `** Grupo Para: ** ${session.selectedDungeon?.name || "Ninguna"}`
     )
@@ -465,7 +546,7 @@ function createRoleMentionsMessage(roles: {
 }) {
   const roleMentions = `<@&${roles.tank.id}> <@&${roles.healer.id}> <@&${roles.dps.id}>`;
   return {
-    content: `¡Nueva mazmorra disponible!: ${roleMentions}`,
+    content: `¡Nuevo Grupo disponible!: ${roleMentions}`,
     allowedMentions: { roles: [roles.tank.id, roles.healer.id, roles.dps.id] },
   };
 }
