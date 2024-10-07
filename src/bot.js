@@ -13,9 +13,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const discord_js_1 = require("discord.js");
-const mazmorras_1 = require("./resource/mazmorras");
 const dotenv_1 = __importDefault(require("dotenv"));
 const eventsTypes_1 = require("./resource/eventsTypes");
+const mazmorras_1 = require("./resource/mazmorras");
 dotenv_1.default.config();
 const client = new discord_js_1.Client({
     intents: [

@@ -13,9 +13,9 @@ import {
   ChannelType,
   VoiceState,
 } from "discord.js";
-import { dungeons } from "./resource/mazmorras";
 import dotenv from "dotenv";
 import { eventTypes } from "./resource/eventsTypes";
+import { dungeons } from "./resource/mazmorras";
 dotenv.config();
 
 const client = new Client({
