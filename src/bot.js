@@ -57,6 +57,14 @@ client.on("interactionCreate", (interaction) => __awaiter(void 0, void 0, void 0
     if (!interaction.isCommand())
         return;
     const { commandName } = interaction;
+    // Verifica si el comando se ejecuta en el canal permitido
+    if (interaction.channel &&
+        interaction.channel.id !== process.env.CHANNEL_ID) {
+        return interaction.reply({
+            content: "Este comando solo se puede usar en el canal específico.",
+            ephemeral: true, // Solo visible para el usuario que ejecutó el comando
+        });
+    }
     if (commandName === "findparty") {
         const sessionId = Date.now().toString();
         dungeonSessions.set(sessionId, {
@@ -324,6 +332,11 @@ function createDungeonEmbed(session, sessionId, creatorId, roles) {
 }
 function moveToPartyVoiceChannel(member, session) {
     return __awaiter(this, void 0, void 0, function* () {
+        // Verificar si el miembro ya está conectado a un canal de voz
+        if (!member.voice.channel) {
+            console.log(`El miembro ${member.user.tag} no está conectado a un canal de voz.`);
+            return; // Terminar la función si el miembro no está en un canal de voz
+        }
         // Verifica si ya existe un canal de voz
         if (!session.voiceChannelId) {
             try {
@@ -382,12 +395,7 @@ function moveToPartyVoiceChannel(member, session) {
         const channel = member.guild.channels.cache.get(session.voiceChannelId);
         if (!channel || channel.type !== discord_js_1.ChannelType.GuildVoice)
             return;
-        try {
-            yield member.voice.setChannel(channel); // Mover al usuario
-        }
-        catch (error) {
-            console.error(`Error al mover al usuario al canal de voz: ${error}`);
-        }
+        yield member.voice.setChannel(channel); // Mover al usuario
     });
 }
 function getRoleData(guild) {

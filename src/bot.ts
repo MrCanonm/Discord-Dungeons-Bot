@@ -439,6 +439,14 @@ async function createDungeonEmbed(
 }
 
 async function moveToPartyVoiceChannel(member: GuildMember, session: Session) {
+  // Verificar si el miembro ya está conectado a un canal de voz
+  if (!member.voice.channel) {
+    console.log(
+      `El miembro ${member.user.tag} no está conectado a un canal de voz.`
+    );
+    return; // Terminar la función si el miembro no está en un canal de voz
+  }
+
   // Verifica si ya existe un canal de voz
   if (!session.voiceChannelId) {
     try {
@@ -518,11 +526,7 @@ async function moveToPartyVoiceChannel(member: GuildMember, session: Session) {
   ) as VoiceChannel;
   if (!channel || channel.type !== ChannelType.GuildVoice) return;
 
-  try {
-    await member.voice.setChannel(channel); // Mover al usuario
-  } catch (error) {
-    console.error(`Error al mover al usuario al canal de voz: ${error}`);
-  }
+  await member.voice.setChannel(channel); // Mover al usuario
 }
 
 async function getRoleData(guild: any) {
